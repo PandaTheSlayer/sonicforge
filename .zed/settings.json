@@ -1,0 +1,53 @@
+{
+  "languages": {
+    "Make": {
+      "tab_size": 4,
+      "hard_tabs": true
+    },
+    "Go": {
+      "tab_size": 4,
+      "hard_tabs": true,
+      "format_on_save": "on",
+      "formatter": "language_server",
+      "language_servers": ["gopls", "..."],
+      "semantic_tokens": "combined",
+      "colorize_brackets": true,
+      "code_actions_on_format": {
+        "source.organizeImports": true
+      }
+    }
+  },
+  "lsp": {
+    "gopls": {
+      "initialization_options": {
+        "staticcheck": true,
+        "gofumpt": true,
+        "vulncheck": "Imports",
+        "local": "sonicforge",
+        "usePlaceholders": true,
+        "experimentalPostfixCompletions": true,
+        "hoverKind": "FullDocumentation",
+        "linksInHover": true,
+        "analyses": {
+          "undeclaredname": true,
+          "stubmethods": true,
+          "fillstruct": true,
+          "unusedvariable": true,
+          "nilness": true,
+          "unusedparams": true,
+          "unusedwrite": true,
+          "shadow": true,
+          "useany": true
+        },
+        "completeFunctionCalls": true,
+        "hints": {
+          "compositeLiteralFields": true,
+          "constantValues": true,
+          "functionTypeParameters": true,
+          "parameterNames": true
+        },
+        "semanticTokens": true
+      }
+    }
+  }
+}

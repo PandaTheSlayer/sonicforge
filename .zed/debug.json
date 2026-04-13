@@ -1,0 +1,33 @@
+[
+  {
+    "label": "Debug package",
+    "adapter": "Delve",
+    "request": "launch",
+    "mode": "debug",
+    "program": "${ZED_WORKTREE_ROOT}",
+    "cwd": "${ZED_WORKTREE_ROOT}"
+  },
+  {
+    "label": "Debug current file",
+    "adapter": "Delve",
+    "request": "launch",
+    "mode": "debug",
+    "program": "${ZED_FILE}",
+    "cwd": "${ZED_WORKTREE_ROOT}"
+  },
+  {
+    "label": "Debug tests",
+    "adapter": "Delve",
+    "request": "launch",
+    "mode": "test",
+    "program": "${ZED_WORKTREE_ROOT}",
+    "cwd": "${ZED_WORKTREE_ROOT}"
+  },
+  {
+    "label": "Attach to process",
+    "adapter": "Delve",
+    "request": "attach",
+    "mode": "local",
+    "processId": "${ZED_CUSTOM_processId}"
+  }
+]
