@@ -22,17 +22,18 @@ type Config struct {
 		ClientID string `mapstructure:"client_id"`
 	} `mapstructure:"spotify"`
 	Discovery struct {
-		TopArtistsCount     int     `mapstructure:"top_artists_count"`
-		SimilarDepth        int     `mapstructure:"similar_depth"`
-		MaxSimilarPerArtist int     `mapstructure:"max_similar_per_artist"`
-		MinSimilarity       float64 `mapstructure:"min_similarity"`
-		ExcludeListened     bool    `mapstructure:"exclude_listened"`
-		MinListeners        int     `mapstructure:"min_listeners"`
-		PopularityRange     [2]int  `mapstructure:"popularity_range"`
-		PlaylistSize        int     `mapstructure:"playlist_size"`
-		TagsWeight          float64 `mapstructure:"tags_weight"`
-		CFWeight            float64 `mapstructure:"cf_weight"`
-		SimilarityWeight    float64 `mapstructure:"similarity_weight"`
+		TopArtistsCount     int      `mapstructure:"top_artists_count"`
+		SimilarDepth        int      `mapstructure:"similar_depth"`
+		MaxSimilarPerArtist int      `mapstructure:"max_similar_per_artist"`
+		MinSimilarity       float64  `mapstructure:"min_similarity"`
+		ExcludeListened     bool     `mapstructure:"exclude_listened"`
+		MinListeners        int      `mapstructure:"min_listeners"`
+		PopularityRange     [2]int   `mapstructure:"popularity_range"`
+		PlaylistSize        int      `mapstructure:"playlist_size"`
+		TagsWeight          float64  `mapstructure:"tags_weight"`
+		CFWeight            float64  `mapstructure:"cf_weight"`
+		SimilarityWeight    float64  `mapstructure:"similarity_weight"`
+		ExcludeTags         []string `mapstructure:"exclude_tags"`
 	} `mapstructure:"discovery"`
 	Log struct {
 		Level string `mapstructure:"level"`

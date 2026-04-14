@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func (c *Client) GetTopArtists(ctx context.Context, username string, period string, limit int) ([]Artist, error) {
@@ -31,6 +32,12 @@ func (c *Client) GetTopArtists(ctx context.Context, username string, period stri
 }
 
 func (c *Client) GetTopTags(ctx context.Context, artistName string) ([]Tag, error) {
+	cacheKey := "toptags:" + artistName
+	var cached []Tag
+	if c.cache != nil && c.cache.Get(cacheKey, 30*24*time.Hour, &cached) {
+		return cached, nil
+	}
+
 	resp, err := c.call(ctx, "artist.getTopTags", map[string]string{
 		"artist": artistName,
 	})
@@ -44,10 +51,20 @@ func (c *Client) GetTopTags(ctx context.Context, artistName string) ([]Tag, erro
 		return nil, err
 	}
 
+	if c.cache != nil {
+		c.cache.Set(cacheKey, result.TopTags.Tag)
+	}
+
 	return result.TopTags.Tag, nil
 }
 
 func (c *Client) GetSimilar(ctx context.Context, artistName string, limit int) ([]SimilarArtist, error) {
+	cacheKey := "similar:" + artistName + ":" + strconv.Itoa(limit)
+	var cached []SimilarArtist
+	if c.cache != nil && c.cache.Get(cacheKey, 7*24*time.Hour, &cached) {
+		return cached, nil
+	}
+
 	resp, err := c.call(ctx, "artist.getSimilar", map[string]string{
 		"artist": artistName,
 		"limit":  strconv.Itoa(limit),
@@ -60,6 +77,10 @@ func (c *Client) GetSimilar(ctx context.Context, artistName string, limit int) (
 	err = json.Unmarshal(resp, &result)
 	if err != nil {
 		return nil, err
+	}
+
+	if c.cache != nil {
+		c.cache.Set(cacheKey, result.SimilarArtists.Artists)
 	}
 
 	return result.SimilarArtists.Artists, nil
@@ -117,9 +138,12 @@ func (c *Client) BuildProfile(ctx context.Context, username string, topCount int
 			continue
 		}
 
+		var artistTags []string
 		for _, t := range topTags {
 			aggregatedTags[t.Name] += t.Count
+			artistTags = append(artistTags, strings.ToLower(t.Name))
 		}
+		tasteProfile.TopArtists[i].Tags = artistTags
 	}
 	fmt.Fprintf(os.Stderr, "\rFetching tags... done (%d unique)\n", len(aggregatedTags))
 

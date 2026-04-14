@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"sonicforge/internal/cache"
 )
 
 const (
@@ -21,14 +23,16 @@ type Client struct {
 	apiKey     string
 	baseURL    string
 	limiter    *time.Ticker
+	cache      *cache.Cache
 }
 
-func NewClient(apiKey string) *Client {
+func NewClient(apiKey string, c *cache.Cache) *Client {
 	return &Client{
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 		apiKey:     apiKey,
 		baseURL:    defaultBaseURL,
 		limiter:    time.NewTicker(200 * time.Millisecond), // 5 req/sec
+		cache:      c,
 	}
 }
 

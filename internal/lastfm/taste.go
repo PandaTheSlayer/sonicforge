@@ -11,6 +11,7 @@ type ArtistScore struct {
 	Name            string
 	Playcount       int
 	NormalizedScore float64
+	Tags            []string
 }
 
 type TagScore struct {
