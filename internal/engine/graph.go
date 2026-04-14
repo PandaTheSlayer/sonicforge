@@ -27,6 +27,9 @@ func (d *Discoverer) buildSimilarGraph(ctx context.Context, profile *lastfm.Tast
 			if profile.KnownArtists[strings.ToLower(s.Name)] {
 				continue
 			}
+			if isExcludedArtist(s.Name, d.config.Discovery.ExcludeArtists) {
+				continue
+			}
 			similarityScore, err := strconv.ParseFloat(s.Match, 64)
 			if err != nil {
 				similarityScore = float64(0)
@@ -83,6 +86,15 @@ func (d *Discoverer) buildSimilarGraph(ctx context.Context, profile *lastfm.Tast
 	}
 
 	return candidates
+}
+
+func isExcludedArtist(name string, excludeList []string) bool {
+	for _, e := range excludeList {
+		if strings.ToLower(name) == strings.ToLower(e) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasExcludedTag(artistTags []string, excludeTags []string) bool {

@@ -34,6 +34,9 @@ type Config struct {
 		CFWeight            float64  `mapstructure:"cf_weight"`
 		SimilarityWeight    float64  `mapstructure:"similarity_weight"`
 		ExcludeTags         []string `mapstructure:"exclude_tags"`
+		BoostTags           []string `mapstructure:"boost_tags"`
+		PenaltyTags         []string `mapstructure:"penalty_tags"`
+		ExcludeArtists      []string `mapstructure:"exclude_artists"`
 	} `mapstructure:"discovery"`
 	Log struct {
 		Level string `mapstructure:"level"`

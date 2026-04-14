@@ -11,6 +11,10 @@ import (
 	"sonicforge/internal/config"
 	"sonicforge/internal/engine"
 	"sonicforge/internal/lastfm"
+	"sonicforge/internal/spotify"
+	"sonicforge/internal/tui"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/spf13/cobra"
 )
@@ -67,21 +71,99 @@ func newRootCommand() *cobra.Command {
 	cmd.AddCommand(
 		newDiscoverCmd(&cfg, &appCache),
 		newProfileCmd(&cfg, &appCache),
-		newTuiCmd(),
+		newAuthCmd(&cfg),
+		newTuiCmd(&cfg, &appCache),
 	)
 
 	return cmd
 }
 
-func newTuiCmd() *cobra.Command {
-	return &cobra.Command{
+func newTuiCmd(cfg **config.Config, appCache **cache.Cache) *cobra.Command {
+	cmd := &cobra.Command{
 		Use:   "tui",
-		Short: "Enter sonicforge TUI",
+		Short: "Interactive discovery TUI",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("tui: not implemented yet")
+			period, _ := cmd.Flags().GetString("period")
+			c := lastfm.NewClient((*cfg).LastFM.APIKey, *appCache)
+			defer c.Close()
+
+			// Build or load profile
+			cacheKey := "profile:" + (*cfg).LastFM.Username + ":" + period
+			var profile *lastfm.TasteProfile
+			if (*appCache).Get(cacheKey, 24*time.Hour, &profile) {
+				fmt.Fprintf(os.Stderr, "Using cached profile\n")
+			} else {
+				fmt.Fprintf(os.Stderr, "Building taste profile...\n")
+				var err error
+				profile, err = c.BuildProfile(cmd.Context(), (*cfg).LastFM.Username, (*cfg).Discovery.TopArtistsCount, period)
+				if err != nil {
+					return err
+				}
+				(*appCache).Set(cacheKey, profile)
+			}
+
+			// Generate and rank candidates
+			disc := engine.NewDiscoverer(c, **cfg)
+			fmt.Fprintf(os.Stderr, "Discovering similar artists...\n")
+			candidates, err := disc.GenerateCandidates(cmd.Context(), profile)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "Ranking %d candidates...\n", len(candidates))
+			ranked := disc.RankAndDedup(cmd.Context(), candidates, profile)
+
+			// Launch TUI
+			m := tui.New(ranked)
+			p := tea.NewProgram(m, tea.WithAltScreen())
+			result, err := p.Run()
+			if err != nil {
+				return err
+			}
+
+			// After TUI exits — create playlist if approved tracks
+			finalModel := result.(tui.Model)
+			approved := finalModel.Approved()
+			if len(approved) == 0 {
+				fmt.Println("No tracks approved.")
+				return nil
+			}
+
+			fmt.Printf("%d tracks approved. Creating Spotify playlist...\n", len(approved))
+			sp := spotify.NewClient((*cfg).Spotify.ClientID)
+			if err := sp.Authenticate(cmd.Context()); err != nil {
+				return err
+			}
+
+			var uris []string
+			for _, cand := range approved {
+				track, err := sp.Search(cmd.Context(), cand.ArtistName, cand.TrackName)
+				if err != nil || track == nil {
+					continue
+				}
+				uris = append(uris, track.URI)
+			}
+
+			if len(uris) == 0 {
+				fmt.Println("No tracks matched on Spotify.")
+				return nil
+			}
+
+			playlistName := fmt.Sprintf("sonicforge discovery — %s", time.Now().Format("2006-01-02"))
+			playlistID, err := sp.CreatePlaylist(cmd.Context(), "", playlistName, "Curated via sonicforge TUI")
+			if err != nil {
+				return err
+			}
+
+			if err := sp.AddTracks(cmd.Context(), playlistID, uris); err != nil {
+				return err
+			}
+
+			fmt.Printf("Playlist created: %s (%d tracks)\n", playlistName, len(uris))
 			return nil
 		},
 	}
+	cmd.Flags().StringP("period", "p", "overall", "time period: overall, 7day, 1month, 3month, 6month, 12month")
+	return cmd
 }
 
 func newProfileCmd(cfg **config.Config, appCache **cache.Cache) *cobra.Command {
@@ -171,9 +253,76 @@ func newDiscoverCmd(cfg **config.Config, appCache **cache.Cache) *cobra.Command 
 					i+1, cand.ArtistName, cand.CompositeScore, cand.SimilarityScore, cand.TagOverlapScore, cand.Source)
 			}
 
+			createPlaylist, _ := cmd.Flags().GetBool("playlist")
+			if !createPlaylist {
+				return nil
+			}
+
+			// Spotify: auth, search, create playlist
+			sp := spotify.NewClient((*cfg).Spotify.ClientID)
+			if err := sp.Authenticate(cmd.Context()); err != nil {
+				return fmt.Errorf("spotify auth: %w", err)
+			}
+
+			fmt.Fprintf(os.Stderr, "Matching tracks on Spotify...\n")
+			var uris []string
+			for i, cand := range ranked {
+				fmt.Fprintf(os.Stderr, "\rSearching... %d/%d", i+1, len(ranked))
+				track, err := sp.Search(cmd.Context(), cand.ArtistName, cand.TrackName)
+				if err != nil {
+					slog.Debug("spotify search failed", "artist", cand.ArtistName, "error", err)
+					continue
+				}
+				if track == nil {
+					slog.Debug("no spotify match", "artist", cand.ArtistName, "track", cand.TrackName)
+					continue
+				}
+				uris = append(uris, track.URI)
+			}
+			fmt.Fprintf(os.Stderr, "\rMatched %d/%d tracks on Spotify\n", len(uris), len(ranked))
+
+			if len(uris) == 0 {
+				fmt.Println("No tracks matched on Spotify.")
+				return nil
+			}
+
+			userID, err := sp.GetCurrentUser(cmd.Context())
+			if err != nil {
+				return fmt.Errorf("getting spotify user: %w", err)
+			}
+
+			playlistName := fmt.Sprintf("sonicforge discovery — %s", time.Now().Format("2006-01-02"))
+			playlistID, err := sp.CreatePlaylist(cmd.Context(), userID, playlistName, "Auto-generated from Last.fm")
+			if err != nil {
+				return fmt.Errorf("creating playlist: %w", err)
+			}
+
+			if err := sp.AddTracks(cmd.Context(), playlistID, uris); err != nil {
+				return fmt.Errorf("adding tracks: %w", err)
+			}
+
+			fmt.Printf("\nPlaylist created: %s (%d tracks)\n", playlistName, len(uris))
+
 			return nil
 		},
 	}
 	cmd.Flags().StringP("period", "p", "overall", "time period: overall, 7day, 1month, 3month, 6month, 12month")
+	cmd.Flags().Bool("playlist", false, "create Spotify playlist from results")
 	return cmd
+}
+
+func newAuthCmd(cfg **config.Config) *cobra.Command {
+	return &cobra.Command{
+		Use:   "auth",
+		Short: "Authenticate with Spotify",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c := spotify.NewClient((*cfg).Spotify.ClientID)
+			fmt.Fprintf(os.Stderr, "Starting Spotify authentication...\n")
+			if err := c.Authenticate(cmd.Context()); err != nil {
+				return err
+			}
+			fmt.Println("Authenticated successfully!")
+			return nil
+		},
+	}
 }

@@ -105,6 +105,24 @@ func (c *Client) GetTopTracks(ctx context.Context, username, period string, limi
 	return result.TopTracks.Tracks, nil
 }
 
+func (c *Client) GetArtistTopTracks(ctx context.Context, artistName string, limit int) ([]Track, error) {
+	resp, err := c.call(ctx, "artist.getTopTracks", map[string]string{
+		"artist": artistName,
+		"limit":  strconv.Itoa(limit),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var result TopTracksResponse
+	err = json.Unmarshal(resp, &result)
+	if err != nil {
+		return nil, err
+	}
+
+	return result.TopTracks.Tracks, nil
+}
+
 func (c *Client) BuildProfile(ctx context.Context, username string, topCount int, period string) (*TasteProfile, error) {
 	fmt.Fprintf(os.Stderr, "Fetching top artists...")
 	topArtists, err := c.GetTopArtists(ctx, username, period, topCount)
