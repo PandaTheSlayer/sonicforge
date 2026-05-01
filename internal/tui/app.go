@@ -82,6 +82,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if len(m.candidates) == 0 {
 				m.state = stateDone
 			}
+		case "a":
+			// approve all remaining
+			m.approved = append(m.approved, m.candidates...)
+			m.candidates = nil
+			m.cursor = 0
+			m.state = stateDone
 		case "d":
 			// done — go to summary
 			m.state = stateDone
@@ -113,12 +119,16 @@ func (m Model) Approved() []engine.Candidate {
 // --- styles ---
 
 var (
-	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
-	normalStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
-	approvedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("82"))
-	helpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	titleStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
+	selectedStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
+	normalStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	dimStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
+	approvedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("82"))
+	helpStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	lastfmStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("82"))  // green
+	lbCFStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))  // blue
+	lbRadioStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("220")) // yellow
+	counterStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 )
 
 // --- views ---
@@ -127,6 +137,8 @@ func (m Model) viewBrowse() string {
 	var b strings.Builder
 
 	b.WriteString(titleStyle.Render("sonicforge — browse candidates"))
+	b.WriteString("  ")
+	b.WriteString(counterStyle.Render(fmt.Sprintf("[%d/%d]", m.cursor+1, len(m.candidates))))
 	b.WriteString("\n")
 	b.WriteString(dimStyle.Render(fmt.Sprintf("  %d remaining · %d approved", len(m.candidates), len(m.approved))))
 	b.WriteString("\n\n")
@@ -144,11 +156,12 @@ func (m Model) viewBrowse() string {
 	for i := start; i < end; i++ {
 		c := m.candidates[i]
 		line := fmt.Sprintf("%s — %s (%.2f)", c.ArtistName, c.TrackName, c.CompositeScore)
+		sourceTag := sourceLabel(c.Source)
 
 		if i == m.cursor {
-			b.WriteString("  ▸ " + selectedStyle.Render(line))
+			b.WriteString("  ▸ " + selectedStyle.Render(line) + " " + sourceTag)
 		} else {
-			b.WriteString("    " + normalStyle.Render(line))
+			b.WriteString("    " + normalStyle.Render(line) + " " + sourceTag)
 		}
 		b.WriteString("\n")
 	}
@@ -171,9 +184,24 @@ func (m Model) viewBrowse() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  ↑/k up · ↓/j down · enter approve · x skip · d done · q quit"))
+	b.WriteString(helpStyle.Render("  ↑/k up · ↓/j down · enter approve · x skip · a approve all · d done · q quit"))
 
 	return b.String()
+}
+
+func sourceLabel(source string) string {
+	switch source {
+	case "lastfm-similar":
+		return lastfmStyle.Render("[last.fm]")
+	case "lb-cf":
+		return lbCFStyle.Render("[lb-cf]")
+	case "lb-radio-tag":
+		return lbRadioStyle.Render("[lb-radio]")
+	case "lb-radio-artist":
+		return lbRadioStyle.Render("[lb-artist]")
+	default:
+		return dimStyle.Render("[" + source + "]")
+	}
 }
 
 func (m Model) viewDone() string {

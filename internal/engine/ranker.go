@@ -11,16 +11,33 @@ import (
 )
 
 func (d *Discoverer) rank(ctx context.Context, candidates []Candidate, profile *lastfm.TasteProfile) []Candidate {
-	// phase 1
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].SimilarityScore > candidates[j].SimilarityScore
-	})
+	// phase 1: cap pool, but reserve slots for LB Radio candidates so they aren't
+	// crowded out by Last.fm similar artists with higher raw similarity scores.
+	const limit = 200
+	const lbCap = limit / 2 // up to 100 LB Radio slots
 
-	limit := 200
-
-	if len(candidates) > limit {
-		candidates = candidates[:limit]
+	var lbPool, lastfmPool []Candidate
+	for _, c := range candidates {
+		if strings.HasPrefix(c.Source, "lb-") {
+			lbPool = append(lbPool, c)
+		} else {
+			lastfmPool = append(lastfmPool, c)
+		}
 	}
+
+	if len(lbPool) > lbCap {
+		lbPool = lbPool[:lbCap]
+	}
+
+	sort.Slice(lastfmPool, func(i, j int) bool {
+		return lastfmPool[i].SimilarityScore > lastfmPool[j].SimilarityScore
+	})
+	remaining := limit - len(lbPool)
+	if remaining > len(lastfmPool) {
+		remaining = len(lastfmPool)
+	}
+
+	candidates = append(lbPool, lastfmPool[:remaining]...)
 
 	profileTags := make(map[string]bool)
 	for _, t := range profile.TopTags {
@@ -34,9 +51,17 @@ func (d *Discoverer) rank(ctx context.Context, candidates []Candidate, profile *
 			candidates[i].Tags = append(candidates[i].Tags, strings.ToLower(t.Name))
 		}
 
-		tracks, _ := d.lastfm.GetArtistTopTracks(ctx, c.ArtistName, 1)
+		tracks, _ := d.lastfm.GetArtistTopTracks(ctx, c.ArtistName, 10)
 		if len(tracks) > 0 {
 			candidates[i].TrackName = tracks[0].Name
+			artistLower := strings.ToLower(c.ArtistName)
+			for _, t := range tracks {
+				key := artistLower + "::" + strings.ToLower(t.Name)
+				if !profile.KnownTracks[key] {
+					candidates[i].TrackName = t.Name
+					break
+				}
+			}
 		}
 
 		overlap := 0

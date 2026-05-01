@@ -11,6 +11,7 @@ import (
 	"sonicforge/internal/config"
 	"sonicforge/internal/engine"
 	"sonicforge/internal/lastfm"
+	"sonicforge/internal/listenbrainz"
 	"sonicforge/internal/spotify"
 	"sonicforge/internal/tui"
 
@@ -84,6 +85,12 @@ func newTuiCmd(cfg **config.Config, appCache **cache.Cache) *cobra.Command {
 		Short: "Interactive discovery TUI",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			period, _ := cmd.Flags().GetString("period")
+
+			discovery, err := resolveDiscoveryConfig(cmd, *cfg)
+			if err != nil {
+				return err
+			}
+
 			c := lastfm.NewClient((*cfg).LastFM.APIKey, *appCache)
 			defer c.Close()
 
@@ -94,8 +101,7 @@ func newTuiCmd(cfg **config.Config, appCache **cache.Cache) *cobra.Command {
 				fmt.Fprintf(os.Stderr, "Using cached profile\n")
 			} else {
 				fmt.Fprintf(os.Stderr, "Building taste profile...\n")
-				var err error
-				profile, err = c.BuildProfile(cmd.Context(), (*cfg).LastFM.Username, (*cfg).Discovery.TopArtistsCount, period)
+				profile, err = c.BuildProfile(cmd.Context(), (*cfg).LastFM.Username, discovery.TopArtistsCount, period)
 				if err != nil {
 					return err
 				}
@@ -103,7 +109,10 @@ func newTuiCmd(cfg **config.Config, appCache **cache.Cache) *cobra.Command {
 			}
 
 			// Generate and rank candidates
-			disc := engine.NewDiscoverer(c, **cfg)
+			lb := listenbrainz.NewClient((*cfg).ListenBrainz.UserToken, (*cfg).ListenBrainz.Username)
+			cfgCopy := **cfg
+			cfgCopy.Discovery = discovery
+			disc := engine.NewDiscoverer(c, lb, cfgCopy)
 			fmt.Fprintf(os.Stderr, "Discovering similar artists...\n")
 			candidates, err := disc.GenerateCandidates(cmd.Context(), profile)
 			if err != nil {
@@ -163,6 +172,7 @@ func newTuiCmd(cfg **config.Config, appCache **cache.Cache) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringP("period", "p", "overall", "time period: overall, 7day, 1month, 3month, 6month, 12month")
+	addDiscoveryFlags(cmd)
 	return cmd
 }
 
@@ -220,6 +230,12 @@ func newDiscoverCmd(cfg **config.Config, appCache **cache.Cache) *cobra.Command 
 		Short: "Discover new music based on your taste profile",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			period, _ := cmd.Flags().GetString("period")
+
+			discovery, err := resolveDiscoveryConfig(cmd, *cfg)
+			if err != nil {
+				return err
+			}
+
 			c := lastfm.NewClient((*cfg).LastFM.APIKey, *appCache)
 			defer c.Close()
 
@@ -229,15 +245,17 @@ func newDiscoverCmd(cfg **config.Config, appCache **cache.Cache) *cobra.Command 
 				fmt.Fprintf(os.Stderr, "Using cached profile\n")
 			} else {
 				fmt.Fprintf(os.Stderr, "Building taste profile...\n")
-				var err error
-				profile, err = c.BuildProfile(cmd.Context(), (*cfg).LastFM.Username, (*cfg).Discovery.TopArtistsCount, period)
+				profile, err = c.BuildProfile(cmd.Context(), (*cfg).LastFM.Username, discovery.TopArtistsCount, period)
 				if err != nil {
 					return err
 				}
 				(*appCache).Set(cacheKey, profile)
 			}
 
-			disc := engine.NewDiscoverer(c, **cfg)
+			lb := listenbrainz.NewClient((*cfg).ListenBrainz.UserToken, (*cfg).ListenBrainz.Username)
+			cfgCopy := **cfg
+			cfgCopy.Discovery = discovery
+			disc := engine.NewDiscoverer(c, lb, cfgCopy)
 			fmt.Fprintf(os.Stderr, "Discovering similar artists...\n")
 			candidates, err := disc.GenerateCandidates(cmd.Context(), profile)
 			if err != nil {
@@ -308,6 +326,7 @@ func newDiscoverCmd(cfg **config.Config, appCache **cache.Cache) *cobra.Command 
 	}
 	cmd.Flags().StringP("period", "p", "overall", "time period: overall, 7day, 1month, 3month, 6month, 12month")
 	cmd.Flags().Bool("playlist", false, "create Spotify playlist from results")
+	addDiscoveryFlags(cmd)
 	return cmd
 }
 
@@ -325,4 +344,86 @@ func newAuthCmd(cfg **config.Config) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func addDiscoveryFlags(cmd *cobra.Command) {
+	cmd.Flags().String("profile", "", "named profile from config.yaml (discovery.profiles.<name>)")
+	cmd.Flags().String("profile-file", "", "path to external profile YAML")
+	cmd.Flags().Int("playlist-size", 0, "override playlist size")
+	cmd.Flags().StringSlice("boost-tags", nil, "comma-separated boost tags")
+	cmd.Flags().StringSlice("penalty-tags", nil, "comma-separated penalty tags")
+	cmd.Flags().StringSlice("exclude-tags", nil, "comma-separated exclude tags")
+	cmd.Flags().StringSlice("exclude-artists", nil, "comma-separated exclude artists")
+	cmd.Flags().Float64("tags-weight", 0, "override tags weight")
+	cmd.Flags().Float64("similarity-weight", 0, "override similarity weight")
+}
+
+func resolveDiscoveryConfig(cmd *cobra.Command, cfg *config.Config) (config.Discovery, error) {
+	var overrides []config.DiscoveryOverrides
+
+	if name, _ := cmd.Flags().GetString("profile"); name != "" {
+		ov, ok := cfg.Discovery.Profiles[name]
+		if !ok {
+			return config.Discovery{}, fmt.Errorf("profile %q not found in config (available: %v)", name, profileNames(cfg.Discovery.Profiles))
+		}
+		slog.Debug("applying named profile", "name", name)
+		overrides = append(overrides, ov)
+	}
+
+	if path, _ := cmd.Flags().GetString("profile-file"); path != "" {
+		ov, err := config.LoadProfileFile(path)
+		if err != nil {
+			return config.Discovery{}, err
+		}
+		slog.Debug("applying profile file", "path", path)
+		overrides = append(overrides, ov)
+	}
+
+	overrides = append(overrides, buildOverridesFromFlags(cmd))
+
+	return config.MergeDiscoveryConfig(cfg.Discovery, overrides...), nil
+}
+
+func profileNames(m map[string]config.DiscoveryOverrides) []string {
+	names := make([]string, 0, len(m))
+	for k := range m {
+		names = append(names, k)
+	}
+	return names
+}
+
+func buildOverridesFromFlags(cmd *cobra.Command) config.DiscoveryOverrides {
+	var ov config.DiscoveryOverrides
+	f := cmd.Flags()
+
+	if f.Changed("playlist-size") {
+		v, _ := f.GetInt("playlist-size")
+		ov.PlaylistSize = &v
+	}
+	if f.Changed("tags-weight") {
+		v, _ := f.GetFloat64("tags-weight")
+		ov.TagsWeight = &v
+	}
+	if f.Changed("similarity-weight") {
+		v, _ := f.GetFloat64("similarity-weight")
+		ov.SimilarityWeight = &v
+	}
+	if f.Changed("boost-tags") {
+		v, _ := f.GetStringSlice("boost-tags")
+		ov.BoostTags = v
+	}
+	if f.Changed("penalty-tags") {
+		v, _ := f.GetStringSlice("penalty-tags")
+		ov.PenaltyTags = v
+	}
+	if f.Changed("exclude-tags") {
+		v, _ := f.GetStringSlice("exclude-tags")
+		ov.ExcludeTags = v
+	}
+	if f.Changed("exclude-artists") {
+		v, _ := f.GetStringSlice("exclude-artists")
+		ov.ExcludeArtists = v
+	}
+
+	return ov
 }
