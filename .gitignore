@@ -12,3 +12,6 @@ tokens.json
 .cache/
 cache/
 *.log
+
+# private docs / specs
+docs/
