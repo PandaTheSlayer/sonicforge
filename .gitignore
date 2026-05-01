@@ -1,2 +1,14 @@
+# config & secrets
 config.yaml
+tokens.json
+*.token
+.env
+.env.*
+
+# binaries
 /sonicforge
+
+# cache & logs
+.cache/
+cache/
+*.log
