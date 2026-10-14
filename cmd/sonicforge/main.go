@@ -74,6 +74,7 @@ func newRootCommand() *cobra.Command {
 		newProfileCmd(&cfg, &appCache),
 		newAuthCmd(&cfg),
 		newTuiCmd(&cfg, &appCache),
+		newBarCmd(&cfg, &appCache),
 	)
 
 	return cmd
@@ -337,7 +338,7 @@ func newAuthCmd(cfg **config.Config) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c := spotify.NewClient((*cfg).Spotify.ClientID)
 			fmt.Fprintf(os.Stderr, "Starting Spotify authentication...\n")
-			if err := c.Authenticate(cmd.Context()); err != nil {
+			if err := c.Login(cmd.Context()); err != nil {
 				return err
 			}
 			fmt.Println("Authenticated successfully!")

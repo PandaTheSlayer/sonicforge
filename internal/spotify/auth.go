@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -21,8 +23,11 @@ const (
 	authURL     = "https://accounts.spotify.com/authorize"
 	tokenURL    = "https://accounts.spotify.com/api/token"
 	redirectURI = "http://127.0.0.1:8888/callback"
-	scopes      = "playlist-modify-public playlist-modify-private user-top-read user-library-read"
+	scopes      = "playlist-modify-public playlist-modify-private user-top-read user-library-read " +
+		"user-library-modify user-read-playback-state user-read-currently-playing user-modify-playback-state"
 )
+
+var ErrNotAuthenticated = errors.New("spotify: not authenticated, run `sonicforge auth`")
 
 type storedTokens struct {
 	AccessToken  string    `json:"access_token"`
@@ -33,28 +38,46 @@ type storedTokens struct {
 // Authenticate ensures we have valid tokens.
 // Loads from disk, refreshes if expired, or starts PKCE flow if no tokens.
 func (c *Client) Authenticate(ctx context.Context) error {
+	if err := c.AuthenticateStored(ctx); err == nil {
+		return nil
+	} else {
+		slog.Debug("stored tokens unusable, starting new auth", "error", err)
+	}
+	return c.Login(ctx)
+}
+
+func (c *Client) AuthenticateStored(ctx context.Context) error {
 	tokens, err := c.loadTokens()
-	if err == nil && time.Now().Before(tokens.ExpiresAt) {
+	if err != nil {
+		return ErrNotAuthenticated
+	}
+	if time.Now().Before(tokens.ExpiresAt) {
 		slog.Debug("using stored spotify tokens")
 		c.accessToken = tokens.AccessToken
 		return nil
 	}
-
-	if err == nil && tokens.RefreshToken != "" {
-		slog.Debug("refreshing spotify tokens")
-		resp, err := c.refreshTokens(ctx, tokens.RefreshToken)
-		if err == nil {
-			st := &storedTokens{
-				AccessToken:  resp.AccessToken,
-				RefreshToken: resp.RefreshToken,
-				ExpiresAt:    time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second),
-			}
-			c.accessToken = resp.AccessToken
-			return c.saveTokens(st)
-		}
-		slog.Debug("refresh failed, starting new auth", "error", err)
+	if tokens.RefreshToken == "" {
+		return ErrNotAuthenticated
 	}
 
+	slog.Debug("refreshing spotify tokens")
+	resp, err := c.refreshTokens(ctx, tokens.RefreshToken)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrNotAuthenticated, err)
+	}
+	st := &storedTokens{
+		AccessToken:  resp.AccessToken,
+		RefreshToken: resp.RefreshToken,
+		ExpiresAt:    time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second),
+	}
+	if st.RefreshToken == "" {
+		st.RefreshToken = tokens.RefreshToken
+	}
+	c.accessToken = resp.AccessToken
+	return c.saveTokens(st)
+}
+
+func (c *Client) Login(ctx context.Context) error {
 	slog.Debug("starting PKCE flow")
 	resp, err := c.pkceFlow(ctx)
 	if err != nil {
@@ -88,6 +111,9 @@ func (c *Client) loadTokens() (*storedTokens, error) {
 }
 
 func (c *Client) saveTokens(tokens *storedTokens) error {
+	if err := os.MkdirAll(filepath.Dir(c.tokensPath()), 0o700); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(tokens, "", "  ")
 	if err != nil {
 		return err
@@ -182,7 +208,8 @@ func (c *Client) pkceFlow(ctx context.Context) (*TokenResponse, error) {
 
 	// Open in browser
 	fmt.Fprintf(os.Stderr, "Opening browser for Spotify login...\n")
-	exec.Command("xdg-open", authLink).Start()
+	fmt.Fprintf(os.Stderr, "If it does not open, visit:\n%s\n", authLink)
+	openBrowser(authLink)
 	// 4. Start local HTTP server on :8888 to receive callback
 	codeCh := make(chan string, 1)
 	errCh := make(chan error, 1)
@@ -232,4 +259,19 @@ func generateVerifier() (string, error) {
 func generateChallenge(verifier string) string {
 	hash := sha256.Sum256([]byte(verifier))
 	return base64.RawURLEncoding.EncodeToString(hash[:])
+}
+
+func openBrowser(link string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", link)
+	case "darwin":
+		cmd = exec.Command("open", link)
+	default:
+		cmd = exec.Command("xdg-open", link)
+	}
+	if err := cmd.Start(); err != nil {
+		slog.Debug("could not open browser", "error", err)
+	}
 }

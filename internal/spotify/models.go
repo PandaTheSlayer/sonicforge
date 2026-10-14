@@ -7,13 +7,15 @@ type SearchResponse struct {
 }
 
 type SpotifyTrack struct {
-	URI     string `json:"uri"`
-	Name    string `json:"name"`
-	Artists []struct {
+	URI        string `json:"uri"`
+	Name       string `json:"name"`
+	DurationMs int    `json:"duration_ms"`
+	Artists    []struct {
 		Name string `json:"name"`
 	} `json:"artists"`
 	Album struct {
-		Name string `json:"name"`
+		Name   string  `json:"name"`
+		Images []Image `json:"images"`
 	} `json:"album"`
 	ExternalURLs struct {
 		Spotify string `json:"spotify"`
