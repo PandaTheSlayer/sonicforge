@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -82,7 +83,7 @@ func barRun(cfg **config.Config, fn func(ctx context.Context, sp *spotify.Client
 func newBarCmd(cfg **config.Config, appCache **cache.Cache) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bar",
-		Short: "JSON interface for the Zebar panel: now, like, unlike, queue, radio, queue-play",
+		Short: "JSON interface for the Zebar panel: now, like, unlike, queue, radio, queue-play, volume",
 	}
 
 	now := &cobra.Command{
@@ -186,7 +187,44 @@ func newBarCmd(cfg **config.Config, appCache **cache.Cache) *cobra.Command {
 	}
 	queuePlay.Flags().Bool("json", true, "print JSON (always on for bar)")
 
-	cmd.AddCommand(now, likeCmd("like", true), likeCmd("unlike", false), queue, radio, queuePlay)
+	volume := &cobra.Command{
+		Use:   "volume [0-100]",
+		Short: "Spotify app volume of the active device; with a number, set it first",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			set := -1
+			if len(args) == 1 {
+				n, err := strconv.Atoi(args[0])
+				if err != nil || n < 0 || n > 100 {
+					return fmt.Errorf("volume must be 0-100, got %q", args[0])
+				}
+				set = n
+			}
+			return barRun(cfg, func(ctx context.Context, sp *spotify.Client) (any, error) {
+				if set >= 0 {
+					if err := sp.SetVolume(ctx, set); err != nil {
+						return nil, err
+					}
+					// the player reports the new level with a delay; echo what was set
+					return map[string]any{"volume": set, "supports": true}, nil
+				}
+				st, err := sp.Playback(ctx)
+				if err != nil {
+					return nil, err
+				}
+				if st == nil || st.Device == nil {
+					return nil, spotify.ErrNoDevice
+				}
+				res := map[string]any{"supports": st.Device.SupportsVolume, "device": st.Device.Name}
+				if st.Device.VolumePercent != nil {
+					res["volume"] = *st.Device.VolumePercent
+				}
+				return res, nil
+			})(c, args)
+		},
+	}
+
+	cmd.AddCommand(now, likeCmd("like", true), likeCmd("unlike", false), queue, radio, queuePlay, volume)
 	return cmd
 }
 

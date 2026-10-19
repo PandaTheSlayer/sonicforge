@@ -38,6 +38,17 @@ type CurrentlyPlaying struct {
 	Item       *PlayerTrack `json:"item"`
 }
 
+type PlaybackDevice struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	VolumePercent  *int   `json:"volume_percent"`
+	SupportsVolume bool   `json:"supports_volume"`
+}
+
+type PlaybackState struct {
+	Device *PlaybackDevice `json:"device"`
+}
+
 type queueResponse struct {
 	Queue []PlayerTrack `json:"queue"`
 }
@@ -95,6 +106,28 @@ func (c *Client) CurrentlyPlaying(ctx context.Context) (*CurrentlyPlaying, error
 	}
 
 	return &result, nil
+}
+
+// Playback returns the active device; nil when nothing is playing anywhere.
+func (c *Client) Playback(ctx context.Context) (*PlaybackState, error) {
+	body, err := c.doRequest(ctx, http.MethodGet, baseURL+"/me/player", nil)
+	if err != nil || body == nil {
+		return nil, err
+	}
+
+	var result PlaybackState
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+func (c *Client) SetVolume(ctx context.Context, percent int) error {
+	params := url.Values{}
+	params.Set("volume_percent", fmt.Sprint(percent))
+	_, err := c.doRequest(ctx, http.MethodPut, baseURL+"/me/player/volume?"+params.Encode(), nil)
+	return noDevice(err)
 }
 
 func (c *Client) Queue(ctx context.Context, limit int) ([]PlayerTrack, error) {
